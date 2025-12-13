@@ -19,8 +19,6 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());
-
 
 const verifyToken = async (req, res, next) => {
     const token = req.headers.authorization;
@@ -42,6 +40,9 @@ const verifyToken = async (req, res, next) => {
 
 
 }
+app.use(express.json());
+
+
 
 
 // MongoDB client
@@ -65,14 +66,17 @@ async function run() {
 
 
 const verifyAdmin = async (req, res, next) => {
-  const email = req.decoded_email;
-  const query = { email };
-  const user = await usersCollection.findOne(query); // <-- সঠিক variable
-  if (!user || user.role !== 'admin') {
-    return res.status(403).send({ message: 'forbidden access' });
+  const email = req.decoded.email;  
+
+  const user = await usersCollection.findOne({ email });
+
+  if (!user || user.role !== "Admin") {  
+    return res.status(403).send({ message: "forbidden access" });
   }
+
   next();
-}
+};
+
     // ===============================
     // Stripe Checkout Session Route
     // ===============================
@@ -113,11 +117,46 @@ const verifyAdmin = async (req, res, next) => {
 // });
 
 
+// app.post("/create-checkout-session", async (req, res) => {
+//   const { scholarshipId, studentEmail, applicationId, amount } = req.body;
+
+//   if (!scholarshipId || !studentEmail || !applicationId || !amount)
+//     return res.status(400).json({ message: "Missing fields" });
+
+//   if (typeof amount !== "number" || amount <= 0) {
+//     return res.status(400).json({ message: "Invalid amount" });
+//   }
+
+//   try {
+//     const session = await stripe.checkout.sessions.create({
+//       payment_method_types: ["card"],
+//       line_items: [{
+//         price_data: {
+//           currency: "usd",
+//           product_data: { name: "Scholarship Application Fee" },
+//           unit_amount: amount * 100,
+//         },
+//         quantity: 1,
+//       }],
+//       mode: "payment",
+//       success_url: `http://localhost:5173/payment-success?applicationId=${applicationId}&email=${studentEmail}`,
+//       cancel_url: `http://localhost:5173/payment-cancel?applicationId=${applicationId}&email=${studentEmail}`,
+//       metadata: { scholarshipId, studentEmail, applicationId },
+//     });
+
+//     res.json({ url: session.url });
+//   } catch (err) {
+//     console.error("Stripe checkout error:", err);
+//     res.status(500).json({ message: "Failed to create Stripe session", error: err.message });
+//   }
+// });
+
 app.post("/create-checkout-session", async (req, res) => {
   const { scholarshipId, studentEmail, applicationId, amount } = req.body;
 
-  if (!scholarshipId || !studentEmail || !applicationId || !amount)
+  if (!scholarshipId || !studentEmail || !applicationId || !amount) {
     return res.status(400).json({ message: "Missing fields" });
+  }
 
   if (typeof amount !== "number" || amount <= 0) {
     return res.status(400).json({ message: "Invalid amount" });
@@ -126,28 +165,48 @@ app.post("/create-checkout-session", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: { name: "Scholarship Application Fee" },
-          unit_amount: amount * 100,
-        },
-        quantity: 1,
-      }],
       mode: "payment",
-      success_url: `http://localhost:5173/payment-success?applicationId=${applicationId}&email=${studentEmail}`,
-      cancel_url: `http://localhost:5173/payment-cancel?applicationId=${applicationId}&email=${studentEmail}`,
-      metadata: { scholarshipId, studentEmail, applicationId },
+
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "Scholarship Application Fee",
+            },
+            unit_amount: amount * 100,
+          },
+          quantity: 1,
+        },
+      ],
+
+      success_url: `http://localhost:5173/payment-success?applicationId=${applicationId}`,
+      cancel_url: `http://localhost:5173/payment-cancel?applicationId=${applicationId}`,
+
+      metadata: {
+        applicationId,
+        scholarshipId,
+        studentEmail,
+      },
     });
 
     res.json({ url: session.url });
   } catch (err) {
-    console.error("Stripe checkout error:", err);
-    res.status(500).json({ message: "Failed to create Stripe session", error: err.message });
+    console.error("Stripe error:", err);
+    res.status(500).json({ message: "Stripe session failed" });
   }
 });
 
-app.post("/update-payment-status", async (req, res) => { const { applicationId, paymentStatus } = req.body; if (!ObjectId.isValid(applicationId)) return res.status(400).json({ message: "Invalid ID" }); try { const statusUpdate = paymentStatus === "paid" ? "completed" : "pending"; const result = await applicationsCollection.updateOne( { _id: new ObjectId(applicationId) }, { $set: { paymentStatus, applicationStatus: statusUpdate } } ); res.json({ success: true, modifiedCount: result.modifiedCount }); } catch (err) { console.error(err); res.status(500).json({ message: "Failed to update payment status" }); } });
+// app.post("/update-payment-status", async (req, res) => 
+
+//   { const { applicationId, paymentStatus } = req.body;
+//  if (!ObjectId.isValid(applicationId)) 
+//   return res.status(400).json({ message: "Invalid ID" });
+//  try { const statusUpdate = paymentStatus === "paid" ? "completed" : "pending";
+//    const result = await applicationsCollection.updateOne( { _id: new ObjectId(applicationId) }, 
+//    { $set: { paymentStatus, applicationStatus: statusUpdate } } ); 
+//    res.json({ success: true, modifiedCount: result.modifiedCount })
+//    } catch (err) { console.error(err); res.status(500).json({ message: "Failed to update payment status" }) } });
 
 // app.post("/create-checkout-session", async (req, res) => {
 //   const { scholarshipId, studentEmail, applicationId, amount } = req.body;
@@ -325,14 +384,38 @@ app.post("/update-payment-status", async (req, res) => { const { applicationId, 
     // ===============================
     // BASIC ROUTE
     // ===============================
+   app.post("/update-payment-status", async (req, res) => {
+  const { applicationId } = req.body;
+
+  if (!ObjectId.isValid(applicationId)) {
+    return res.status(400).json({ message: "Invalid applicationId" });
+  }
+
+  try {
+    const result = await applicationsCollection.updateOne(
+      { _id: new ObjectId(applicationId) },
+      {
+        $set: {
+          paymentStatus: "paid",
+        },
+      }
+    );
+
+    res.json({ success: true, modifiedCount: result.modifiedCount });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update payment status" });
+  }
+});
+
     app.get("/", (req, res) => res.send("ScholarStream Server Running"));
 
-    // ===============================
+//     ===============================
 // USERS
 // ===============================
 
 
- app.get('/users', verifyToken, async (req, res) => {
+ app.get('/users', verifyToken,verifyAdmin,async (req, res) => {
             const searchText = req.query.searchText;
             const query = {};
 
@@ -354,7 +437,7 @@ app.post("/update-payment-status", async (req, res) => { const { applicationId, 
         
 
        
-app.get('/users/:email/role', async (req, res) => {
+app.get('/users/:email/role',verifyToken,async (req, res) => {
   try {
     const email = req.params.email;
     const user = await usersCollection.findOne({ email });
@@ -381,17 +464,29 @@ app.get('/users/:email/role', async (req, res) => {
             res.send(result);
         })
        app.patch('/users/:id/role', verifyToken, verifyAdmin, async (req, res) => {
-            const id = req.params.id;
-            const roleInfo = req.body;
-            const query = { _id: new ObjectId(id) }
-            const updatedDoc = {
-                $set: {
-                    role: roleInfo.role
-                }
-            }
-            const result = await usersCollection.updateOne(query, updatedDoc)
-            res.send(result);
-        })
+  const id = req.params.id;
+  const roleInfo = req.body;
+  const query = { _id: new ObjectId(id) }
+  const updatedDoc = {
+      $set: {
+          role: roleInfo.role
+      }
+  }
+  const result = await usersCollection.updateOne(query, updatedDoc)
+  res.send(result);
+})
+
+// DELETE /users/:id - delete user
+app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+    res.send({ success: result.deletedCount > 0 });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ success: false });
+  }
+});
 
 // // Get single user info
 // app.get("/users/:email", verifyToken, async (req, res) => {
@@ -432,24 +527,106 @@ app.get("/scholarships/:id", async (req, res) => {
   res.json(scholarship);
 });
 
-// Admin only routes
-app.post("/scholarships",  async (req, res) => {
-  const result = await scholarshipsCollection.insertOne(req.body);
-  res.json(result);
+ 
+app.patch("/scholarships/:id", async (req, res) => {
+  const id = req.params.id;
+  const updateData = req.body;
+  try {
+    const result = await scholarshipsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+    if (result.modifiedCount > 0) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ success: false, message: "Scholarship not found or no changes" });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to update scholarship" });
+  }
+});
+app.post("/scholarships", async (req, res) => {
+  const {
+    scholarshipName,
+    universityName,
+    universityImage,
+    universityCountry,
+    universityCity,
+    universityWorldRank,
+    subjectCategory,
+    scholarshipCategory,
+    degree,
+    tuitionFees,
+    applicationFees,
+    serviceCharge,
+    applicationDeadline,
+    scholarshipPostDate,
+    userEmail
+  } = req.body;
+
+  if (
+    !scholarshipName ||
+    !universityName ||
+    !universityImage ||
+    !universityCountry ||
+    !universityCity ||
+    !subjectCategory ||
+    !scholarshipCategory ||
+    !degree ||
+    !applicationFees ||
+    !serviceCharge ||
+    !applicationDeadline ||
+    !scholarshipPostDate ||
+    !userEmail
+  ) {
+    return res.status(400).json({ message: "Missing required fields" });
+  }
+
+  try {
+    const scholarship = {
+      scholarshipName,
+      universityName,
+      universityImage,
+      universityCountry,
+      universityCity,
+      universityWorldRank,
+      subjectCategory,
+      scholarshipCategory,
+      degree,
+      tuitionFees: tuitionFees || 0,
+      applicationFees,
+      serviceCharge,
+      applicationDeadline: new Date(applicationDeadline),
+      scholarshipPostDate: new Date(scholarshipPostDate),
+      userEmail,
+    };
+
+    const result = await scholarshipsCollection.insertOne(scholarship);
+    res.json({ success: true, insertedId: result.insertedId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to add scholarship" });
+  }
+});
+// DELETE scholarship
+app.delete("/scholarships/:id", async (req, res) => {
+  const id = req.params.id;
+  try {
+    const result = await scholarshipsCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount > 0) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ success: false, message: "Scholarship not found" });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to delete scholarship" });
+  }
 });
 
-app.put("/scholarships/:id", async (req, res) => {
-  const result = await scholarshipsCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: req.body }
-  );
-  res.json(result);
-});
 
-app.delete("/scholarships/:id",  async (req, res) => {
-  const result = await scholarshipsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-  res.json(result);
-});
+
 
 
 
@@ -494,8 +671,6 @@ app.delete("/reviews/:id", async (req, res) => {
 // APPLICATIONS
 // ===============================
 
-// Submit application (student)
-// POST /applications
 app.post("/applications", async (req, res) => {
   const { scholarshipId, studentEmail, paymentStatus } = req.body;
   if (!scholarshipId || !studentEmail || !paymentStatus)
@@ -529,69 +704,146 @@ app.post("/applications", async (req, res) => {
   res.json({ success: true, insertedId: result.insertedId });
 });
 
-// app.post("/applications", async (req, res) => {
-//   const { scholarshipId, studentEmail, paymentStatus } = req.body;
-//   if (!scholarshipId || !studentEmail || !paymentStatus)
-//     return res.status(400).json({ message: "Missing fields" });
+// // app.post("/applications", async (req, res) => {
+// //   const { scholarshipId, studentEmail, paymentStatus } = req.body;
+// //   if (!scholarshipId || !studentEmail || !paymentStatus)
+// //     return res.status(400).json({ message: "Missing fields" });
 
-//   const user = await usersCollection.findOne({ email: studentEmail });
-//   if (!user) return res.status(404).json({ message: "User not found" });
+// //   const user = await usersCollection.findOne({ email: studentEmail });
+// //   if (!user) return res.status(404).json({ message: "User not found" });
 
-//   const scholarship = await scholarshipsCollection.findOne({ _id: new ObjectId(scholarshipId) });
-//   if (!scholarship) return res.status(404).json({ message: "Scholarship not found" });
+// //   const scholarship = await scholarshipsCollection.findOne({ _id: new ObjectId(scholarshipId) });
+// //   if (!scholarship) return res.status(404).json({ message: "Scholarship not found" });
 
-//   // Duplicate check
-//   const existingApplication = await applicationsCollection.findOne({ scholarshipId, studentEmail });
-//   if (existingApplication)
-//     return res.status(400).json({ message: "Already applied" });
+// //   // Duplicate check
+// //   const existingApplication = await applicationsCollection.findOne({ scholarshipId, studentEmail });
+// //   if (existingApplication)
+// //     return res.status(400).json({ message: "Already applied" });
 
-//   const application = {
-//     scholarshipId,
-//     userId: user._id,
-//     studentEmail, // consistent field
-//     universityName: scholarship.universityName,
-//     scholarshipCategory: scholarship.scholarshipCategory,
-//     degree: scholarship.degree,
-//     applicationFees: scholarship.applicationFees,
-//     serviceCharge: 0,
-//     applicationStatus: paymentStatus === "paid" ? "completed" : "pending",
-//     paymentStatus,
-//     applicationDate: new Date(),
-//   };
+// //   const application = {
+// //     scholarshipId,
+// //     userId: user._id,
+// //     studentEmail, // consistent field
+// //     universityName: scholarship.universityName,
+// //     scholarshipCategory: scholarship.scholarshipCategory,
+// //     degree: scholarship.degree,
+// //     applicationFees: scholarship.applicationFees,
+// //     serviceCharge: 0,
+// //     applicationStatus: paymentStatus === "paid" ? "completed" : "pending",
+// //     paymentStatus,
+// //     applicationDate: new Date(),
+// //   };
 
-//   const result = await applicationsCollection.insertOne(application);
-//   res.json({ success: true, insertedId: result.insertedId });
+// //   const result = await applicationsCollection.insertOne(application);
+// //   res.json({ success: true, insertedId: result.insertedId });
+// // });
+
+
+// // Get user applications
+// app.get("/applications", async (req, res) => {
+//   const email = req.query.email;
+//   if (!email) return res.status(400).json({ message: "Email is required" });
+
+//   const apps = await applicationsCollection.find({ userEmail: email }).toArray();
+//   res.json(apps);
+// });
+// // Get all applications for a student
+// app.get("/applications/student/:email", async (req, res) => {
+//   const email = req.params.email;
+//   if (!email) return res.status(400).json({ message: "Email required" });
+
+//   // studentEmail ব্যবহার করুন
+//   const apps = await applicationsCollection.find({ studentEmail: email }).toArray();
+//   res.json(apps);
 // });
 
 
-// Get user applications
+
+// app.get("/applications/check", async (req, res) => {
+//   const { scholarshipId, email } = req.query;
+
+//   if (!scholarshipId || !email) {
+//     return res.status(400).json({ message: "Missing scholarshipId or email" });
+//   }
+
+//   try {
+//     const existingApplication = await applicationsCollection.findOne({
+//       scholarshipId,
+//       studentEmail: email,
+//     });
+//     res.json({ applied: !!existingApplication });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Failed to check application" });
+//   }
+// });
+
+
+// // DELETE /applications/:id
+// app.delete("/applications/:id", async (req, res) => {
+//   const { id } = req.params;
+//   if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid ID" });
+
+//   try {
+//     const result = await applicationsCollection.deleteOne({ _id: new ObjectId(id) });
+//     res.json({ success: result.deletedCount > 0 });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Failed to delete application" });
+//   }
+// });
+
+
+
+// // Update application (admin/moderator)
+// app.patch("/applications/status/:id", async (req, res) => {
+//   const { status } = req.body;
+
+//   const result = await applicationsCollection.updateOne(
+//     { _id: new ObjectId(req.params.id) },
+//     { $set: { applicationStatus: status } }
+//   );
+
+//   res.send(result);
+// });
+// app.patch("/applications/feedback/:id", async (req, res) => {
+//   const { feedback } = req.body;
+
+//   const result = await applicationsCollection.updateOne(
+//     { _id: new ObjectId(req.params.id) },
+//     { $set: { applicationFeedback: feedback } }
+//   );
+
+//   res.send(result);
+// });
+// -------------------- POST APPLICATION --------------------
+
+// -------------------- GET ALL APPLICATIONS --------------------
+// For Moderator/Admin
 app.get("/applications", async (req, res) => {
-  const email = req.query.email;
-  if (!email) return res.status(400).json({ message: "Email is required" });
-
-  const apps = await applicationsCollection.find({ userEmail: email }).toArray();
-  res.json(apps);
+  try {
+    const apps = await applicationsCollection.find({}).toArray();
+    res.json(apps);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch applications" });
+  }
 });
 
-app.get("/scholarships/:id", async (req, res) => {
-  const scholarship = await scholarshipsCollection.findOne({ _id: new ObjectId(req.params.id) });
-  if (!scholarship) return res.status(404).json({ message: "Scholarship not found" });
-  res.json(scholarship);
-});
-
-
-// Get all applications for a student
-app.get("/applications/student/:email", async (req, res) => {
+// -------------------- GET APPLICATIONS FOR A STUDENT --------------------
+app.get("/applications/student/:email", verifyToken, async (req, res) => {
   const email = req.params.email;
   if (!email) return res.status(400).json({ message: "Email required" });
 
-  // studentEmail ব্যবহার করুন
-  const apps = await applicationsCollection.find({ studentEmail: email }).toArray();
-  res.json(apps);
+  try {
+    const apps = await applicationsCollection.find({ studentEmail: email }).toArray();
+    res.json(apps);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch student applications" });
+  }
 });
 
-
-
+// -------------------- CHECK IF STUDENT ALREADY APPLIED --------------------
 app.get("/applications/check", async (req, res) => {
   const { scholarshipId, email } = req.query;
 
@@ -611,30 +863,50 @@ app.get("/applications/check", async (req, res) => {
   }
 });
 
-
-// DELETE /applications/:id
-app.delete("/applications/:id", async (req, res) => {
+app.patch("/applications/:id", async (req, res) => {
+  const { status, feedback } = req.body;
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid ID" });
 
   try {
-    const result = await applicationsCollection.deleteOne({ _id: new ObjectId(id) });
-    res.json({ success: result.deletedCount > 0 });
+    const result = await applicationsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { applicationStatus: status, applicationFeedback: feedback } }
+    );
+    res.json({ success: true, modifiedCount: result.modifiedCount });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to delete application" });
+    res.status(500).json({ message: "Failed to update application" });
+  }
+});
+
+app.delete("/applications/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await applicationsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { applicationStatus: "rejected" } }
+    );
+    res.json({ success: true, modifiedCount: result.modifiedCount });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to cancel application" });
   }
 });
 
 
 
-// Update application (admin/moderator)
-app.put("/applications/:id", async (req, res) => {
-  const result = await applicationsCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: req.body }
-  );
-  res.json(result);
+// -------------------- UPDATE APPLICATION FEEDBACK --------------------
+app.patch("/applications/feedback/:id", verifyToken, async (req, res) => {
+  const { feedback } = req.body;
+
+  try {
+    const result = await applicationsCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { applicationFeedback: feedback } }
+    );
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update feedback" });
+  }
 });
 
     // ===============================
