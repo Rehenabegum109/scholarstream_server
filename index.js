@@ -39,13 +39,12 @@ const verifyToken = async (req, res, next) => {
   try {
     const idToken = token.split(" ")[1];
     const decoded = await admin.auth().verifyIdToken(idToken);
-    req.decoded_email = decoded.email;
+    req.user = decoded;  // <-- req.user.email থাকবে
     next();
   } catch (err) {
     return res.status(401).send({ message: "Unauthorized access" });
   }
 };
-
 // ===============================
 // MONGODB SETUP
 // ===============================
@@ -58,11 +57,21 @@ let scholarshipsCollection;
 let reviewsCollection;
 let applicationsCollection;
 
-// Verify Admin
+
+// Admin verify
 const verifyAdmin = async (req, res, next) => {
-  const email = req.decoded_email;
+  const email = req.user.email;  
   const user = await usersCollection.findOne({ email });
   if (!user || user.role !== "Admin") {
+    return res.status(403).send({ message: "Forbidden access" });
+  }
+  next();
+};
+// Moderator verify
+const verifyModerator = async (req, res, next) => {
+  const email = req.user.email;
+  const user = await usersCollection.findOne({ email });
+  if (!user || (user.role !== "Moderator" && user.role !== "Admin")) {
     return res.status(403).send({ message: "Forbidden access" });
   }
   next();
@@ -162,10 +171,54 @@ async function run() {
     // SCHOLARSHIPS ROUTES
     // ===============================
     // Public: Get all scholarships
-    app.get("/scholarships", async (req, res) => {
-      const scholarships = await scholarshipsCollection.find().toArray();
-      res.json(scholarships);
-    });
+    // GET /scholarships?search=&category=&subject=&location=&sort=&page=&limit=
+app.get("/scholarships", async (req, res) => {
+  const {
+    search = "",
+    category,
+    subject,
+    location,
+    sort,
+    page = 1,
+    limit = 6,
+  } = req.query;
+
+  const query = {};
+
+  // Search
+  if (search) {
+    query.$or = [
+      { scholarshipName: { $regex: search, $options: "i" } },
+      { universityName: { $regex: search, $options: "i" } },
+      { degree: { $regex: search, $options: "i" } },
+    ];
+  }
+
+  // Filter
+  if (category) query.scholarshipCategory = category;
+  if (subject) query.subject = subject;
+  if (location) query.universityCountry = location;
+
+  // Sort
+  let sortOption = {};
+  if (sort === "feeLow") sortOption.applicationFees = 1;
+  if (sort === "feeHigh") sortOption.applicationFees = -1;
+  if (sort === "recent") sortOption.postDate = -1;
+
+  const skip = (page - 1) * limit;
+
+  const scholarships = await scholarshipsCollection
+    .find(query)
+    .sort(sortOption)
+    .skip(skip)
+    .limit(parseInt(limit))
+    .toArray();
+
+  const total = await scholarshipsCollection.countDocuments(query);
+
+  res.json({ scholarships, total });
+});
+
 
     // Get single scholarship
     app.get("/scholarships/:id", async (req, res) => {
